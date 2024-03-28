@@ -159,8 +159,24 @@ step_type_lookup = {
     2: StepType.LAST
 }
 
+def merge_dictionary(list_of_Dict):
+    merged_data = {}
+
+    for d in list_of_Dict:
+        for k, v in d.items():
+            if k not in merged_data.keys():
+                merged_data[k] = [v]
+            else:
+                merged_data[k].append(v)
+
+    for k, v in merged_data.items():
+        merged_data[k] = np.concatenate(merged_data[k])
+
+    return merged_data
+
 
 def load_offline_dataset_into_buffer(offline_dir, replay_buffer, frame_stack, replay_buffer_size):
+    print("Loading offline dataset")
     filenames = sorted(offline_dir.glob('*.hdf5'))
     num_steps = 0
     for filename in filenames:
@@ -178,6 +194,28 @@ def load_offline_dataset_into_buffer(offline_dir, replay_buffer, frame_stack, re
             break
     print("Finished, loaded {} timesteps.".format(int(num_steps)))
 
+def load_generated_dataset_into_buffer(gta_dir, replay_buffer, frame_stack, replay_buffer_size):
+    print("Loading generated dataset")
+    num_steps = 0
+    episodes = np.load(gta_dir, allow_pickle=True) # list of dictionaries
+    for episode in episodes:
+        episode['step_type'] = np.ones_like(episode['rewards'], dtype=np.int).reshape(-1)
+        episode['step_type'][0] = 0
+        episode['step_type'][-1] = 2
+    
+    episodes = merge_dictionary(episodes)
+    episodes['action'] = episodes['actions']
+    episodes['observation'] = episodes['observations']
+    episodes['reward'] = episodes['rewards']
+    episodes['discount'] = np.ones_like(episodes['reward']).reshape(-1)
+
+    replay_buffer.on_gta_flag()
+    add_offline_data_to_buffer(episodes, replay_buffer, framestack=frame_stack)
+    length = episodes['reward'].shape[0]
+    num_steps += length
+    if num_steps >= replay_buffer_size:
+        raise RuntimeError("data is larger than buffer size")
+    print("Finished, loaded {} timesteps.".format(int(num_steps)))
 
 def add_offline_data_to_buffer(offline_data: dict, replay_buffer: EfficientReplayBuffer, framestack: int = 3):
     offline_data_length = offline_data['reward'].shape[0]

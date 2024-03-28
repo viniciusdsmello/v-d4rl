@@ -4,41 +4,57 @@ defaults:
   - algo@_global_: drqv2
   - override hydra/launcher: submitit_local
 
+# GTA 
+gta: /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_202403240152.npy # /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_202403240152.npy
+snapshot_dir: /home/jaewoo/research/v-d4rl/drqv2_data/drqv2/offline_walker_walk_medium/2024.03.24/025502`/snapshot.pt
+save_latent_trajectory: True
+
+
 # task settings
 frame_stack: 3
 action_repeat: 2
 discount: 0.99
 distracting_mode: null
+
+
 # train settings
 num_seed_frames: 4000
+
 # eval
 eval_every_frames: 10000
 num_eval_episodes: 10
 eval_on_distracting: False
 eval_on_multitask: False
 eval_save_vid_every_step: 100000
+
 # snapshot
-save_snapshot: False
+save_snapshot: True
+
 # replay buffer
 replay_buffer_size: 1_000_000
 replay_buffer_num_workers: 1
 nstep: 3
 batch_size: 256
+
 # misc
 seed: 1
 device: cuda
 save_video: True
 save_train_video: False
 use_tb: True
+
 # experiment
 experiment: exp
+
 # agent
 lr: 1e-4
 feature_dim: 50
+
 # offline
-offline: False
+offline: True
 bc_weight: 2.5
 use_bc: True
+
 # cql
 cql_importance_sample: False
 temp: 1.0

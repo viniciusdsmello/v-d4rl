@@ -5,6 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
+drqv2_data/
+*.npy
+*.hdf5
+*.zip
 
 # Distribution / packaging
 .Python
