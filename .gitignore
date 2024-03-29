@@ -9,6 +9,10 @@ drqv2_data/
 *.npy
 *.hdf5
 *.zip
+/home/taeyoung/v-d4rl/wandb/settings
+*.DS_Store
+*.npz
+
 
 # Distribution / packaging
 .Python
