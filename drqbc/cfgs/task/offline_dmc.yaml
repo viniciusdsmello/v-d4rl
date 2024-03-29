@@ -6,7 +6,7 @@ stddev_schedule: 'linear(1.0,0.1,250000)'
 nstep: 1
 show_train_stats_every_frames: 2000
 lr: 3e-4
-replay_buffer_size: 1_000_000
+replay_buffer_size: 6_000_000
 offline: True
 task_name: offline_walker_walk_medium
-offline_dir: /home/jaewoo/research/v-d4rl/vd4rl_data/main/walker_walk/medium
+offline_dir: /home/taeyoung/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver1.npy

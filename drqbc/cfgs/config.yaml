@@ -5,8 +5,8 @@ defaults:
   - override hydra/launcher: submitit_local
 
 # GTA 
-gta: /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_202403240152.npy # /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_202403240152.npy
-snapshot_dir: /home/jaewoo/research/v-d4rl/drqv2_data/drqv2/offline_walker_walk_medium/2024.03.24/025502`/snapshot.pt
+gta: /home/taeyoung/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver1.npy
+snapshot_dir: /home/taeyoung/v-d4rl/trained_policy.pt
 save_latent_trajectory: True
 
 
@@ -31,8 +31,8 @@ eval_save_vid_every_step: 100000
 save_snapshot: True
 
 # replay buffer
-replay_buffer_size: 1_000_000
-replay_buffer_num_workers: 1
+replay_buffer_size: 6_000_000
+replay_buffer_num_workers: 2
 nstep: 3
 batch_size: 256
 
