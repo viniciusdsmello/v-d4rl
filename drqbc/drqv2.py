@@ -99,11 +99,6 @@ class Actor(nn.Module):
 
         dist = utils.TruncatedNormal(mu, std)
         return dist
-    
-    def fine_tune_mode(self):
-        self.trunk.eval()
-        for p in self.trunk.parameters():
-	        p.requires_grad=False
 
     def latent_forward(self, obs, std):
         mu = self.policy(obs)
@@ -111,7 +106,14 @@ class Actor(nn.Module):
         std = torch.ones_like(mu) * std
 
         dist = utils.TruncatedNormal(mu, std)
-        return dist
+        return dist    
+
+    def fine_tune_mode(self):
+        self.trunk.eval()
+        for p in self.trunk.parameters():
+	        p.requires_grad=False
+
+
 
 
 class Critic(nn.Module):
@@ -142,17 +144,17 @@ class Critic(nn.Module):
 
         return q1, q2
     
+    def latent_forward(self, obs, action):
+        h_action = torch.cat([obs, action], dim=-1)
+        q1 = self.Q1(h_action)
+        q2 = self.Q2(h_action)
+        return q1, q2
+
     def fine_tune_mode(self):
         self.trunk.eval()
         for p in self.trunk.parameters():
 	        p.requires_grad=False
 
-    def latent_forward(self, obs, action):
-        h_action = torch.cat([obs, action], dim=-1)
-        q1 = self.Q1(h_action)
-        q2 = self.Q2(h_action)
-
-        return q1, q2
 
 
 class DrQV2Agent:
@@ -215,10 +217,10 @@ class DrQV2Agent:
     
     def latent_act(self, obs, step, eval_mode):
         # obs = torch.as_tensor(obs, device=self.device)
-        # obs = self.encoder(obs.unsqueeze(0))
+        # obs = self.encoder(obs.unsqueeze(0)) # 
         stddev = utils.schedule(self.stddev_schedule, step)
         ## TODO 구현 안되어 있음 ##
-        dist = self.actor.latent_forward(obs, stddev)
+        dist = self.actor.latent_forward(obs, stddev) # obs 들어가는 건 truncated 되어 있는 것이어야 함. 
         if eval_mode:
             action = dist.mean
         else:
@@ -266,12 +268,15 @@ class DrQV2Agent:
         # print(obs.shape)
         critic_trunk = obs[:, :obs.shape[-1]//2 ]
         actor_trunk = obs[:, obs.shape[-1]//2:]
+        
+        next_critic_trunk = next_obs[:, :obs.shape[-1]//2 ]
+        next_actor_trunk = next_obs[:, obs.shape[-1]//2:]
 
         with torch.no_grad():
             stddev = utils.schedule(self.stddev_schedule, step)
-            dist = self.actor.latent_forward(actor_trunk, stddev) ## TODO 차원나누기
+            dist = self.actor.latent_forward(next_actor_trunk, stddev) ## TODO 차원나누기
             next_action = dist.sample(clip=self.stddev_clip)
-            target_Q1, target_Q2 = self.critic_target.latent_forward(critic_trunk, next_action)
+            target_Q1, target_Q2 = self.critic_target.latent_forward(next_critic_trunk, next_action)
             target_V = torch.min(target_Q1, target_Q2)
             target_Q = reward.float() + (discount * target_V)
 
@@ -285,11 +290,9 @@ class DrQV2Agent:
             metrics['critic_loss'] = critic_loss.item()
 
         # optimize encoder and critic
-        self.encoder_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
         self.critic_opt.step()
-        self.encoder_opt.step()
 
         return metrics
 
@@ -420,6 +423,14 @@ class DrQV2Agent:
             batch, self.device)
         # print("DIM:", obs.shape)
 
+        # obs = self.aug(obs.float())
+        # next_obs = self.aug(next_obs.float())
+        # # encode
+        # obs = self.encoder(obs)
+        # with torch.no_grad():
+        #     next_obs = self.encoder(next_obs)
+
+
         if self.use_tb:
             metrics['batch_reward'] = reward.mean().item()
 
@@ -440,10 +451,9 @@ class DrQV2Agent:
         return metrics
 
     def fine_tune_mode(self):
-        self.aug = nn.Sequential()
         self.actor.fine_tune_mode()
         self.critic.fine_tune_mode()
-        self.critic_target.eval()
+        # self.critic_target.eval()
         self.encoder.eval()
         self.encoder.requires_grad_(False)
         for p in self.encoder.parameters():
