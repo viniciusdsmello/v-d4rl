@@ -58,6 +58,7 @@ class Workspace:
         wandb.init(
             # config=self.cfg,
             project=f'VD4RL_{self.cfg.task_name}',
+            entity='gda-for-orl',
             group=f'{self.cfg.experiment}',
             name=f'DrQ-v2'
         )
@@ -93,6 +94,10 @@ class Workspace:
     @property
     def global_step(self):
         return self._global_step
+    
+    @global_step.setter
+    def global_step(self, value):
+        self._global_step=value
 
     @property
     def global_episode(self):
@@ -120,7 +125,7 @@ class Workspace:
                 step += 1
 
             episode += 1
-            self.video_recorder.save(f'{self.global_frame}.mp4')
+            # self.video_recorder.save(f'{self.global_frame}.mp4')
         wandb.log({
             'episode_reward': total_reward / episode,
             'episode_length': step * self.cfg.action_repeat / episode,
@@ -307,6 +312,7 @@ class Workspace:
 
     def load_snapshot(self, snapshot):
         snapshot = Path(snapshot)
+        print("Load snapshot from: ", snapshot)
         with snapshot.open('rb') as f:
             payload = torch.load(f)
         for k, v in payload.items():
@@ -322,11 +328,18 @@ class Workspace:
                                                     1,
                                                     self.data_specs)
 
+        load_generated_dataset_into_buffer(Path(offline_dir), self.replay_buffer, 1,
+                                         self.cfg.replay_buffer_size)
+
         load_generated_dataset_into_buffer(Path(gta_dir), self.replay_buffer, 1,
                                          self.cfg.replay_buffer_size)
+        
+        print(self.replay_buffer.__len__(), " <- Length of the replay buffer")
 
         self.agent.fine_tune_mode()
         # predicates
+        
+        # self.global_step=0 # initialize the training step
         train_until_step = utils.Until(self.cfg.num_train_frames, 1)
         eval_every_step = utils.Every(self.cfg.eval_every_frames, 1)
         show_train_stats_every_step = utils.Every(self.cfg.show_train_stats_every_frames, 1)
@@ -336,6 +349,8 @@ class Workspace:
 
         metrics = None
         step = 0
+        # self.global_step=0
+        
         with tqdm.tqdm(total=self.cfg.num_train_frames) as pbar:
             while train_until_step(self.global_step):
                 if show_train_stats_every_step(self.global_step):
@@ -404,7 +419,7 @@ class Workspace:
             } 
             latent_dataset.append(trajectory)
         timestr = datetime.datetime.now().strftime('%Y%m%d%H%M')
-        np.save(f"/home/jaewoo/research/v-d4rl/encoded_trajectory/{self.cfg.task_name}_{timestr}.npy", latent_dataset)
+        np.save(f"/home/taeyoung/v-d4rl/encoded_trajectory/{self.cfg.task_name}_{timestr}.npy", latent_dataset)
 
     def latent_eval(self):
         step, episode, total_reward = 0, 0, 0
@@ -427,7 +442,7 @@ class Workspace:
             self.video_recorder.save(f'{self.global_frame}.mp4')
 
         wandb.log({
-            'episode_reward': total_reward / episode,
+            'result/episode_reward': total_reward / episode,
             'episode_length': step * self.cfg.action_repeat / episode,
             'episode': self.global_episode},
             step = self.global_step  
@@ -455,7 +470,7 @@ def main(cfg):
 
     else:
         if load_flag:
-            print(f'resuming: {snapshot}')
+            print(f'resuming training')
             workspace.load_snapshot(cfg.snapshot_dir)
             if cfg.save_latent_trajectory:
                 workspace.save_latent_trajectory(cfg.offline_dir)
