@@ -328,8 +328,8 @@ class Workspace:
                                                     1,
                                                     self.data_specs)
 
-        load_generated_dataset_into_buffer(Path(offline_dir), self.replay_buffer, 1,
-                                         self.cfg.replay_buffer_size)
+        # load_generated_dataset_into_buffer(Path(offline_dir), self.replay_buffer, 1,
+        #                                  self.cfg.replay_buffer_size)
 
         load_generated_dataset_into_buffer(Path(gta_dir), self.replay_buffer, 1,
                                          self.cfg.replay_buffer_size)
