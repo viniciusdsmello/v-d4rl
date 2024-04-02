@@ -18,6 +18,7 @@ import hydra
 import numpy as np
 import torch
 from dm_env import specs
+from collections import deque
 
 import dmc
 import utils
@@ -25,9 +26,26 @@ import wandb
 from numpy_replay_buffer import EfficientReplayBuffer, EfficientLatentReplayBuffer
 from video import TrainVideoRecorder, VideoRecorder
 from utils import load_offline_dataset_into_buffer, load_generated_dataset_into_buffer
+import pyrootutils
+
+from dm_env import StepType
+step_type_lookup = {
+    0: StepType.FIRST,
+    1: StepType.MID,
+    2: StepType.LAST
+}
+
+
+path = pyrootutils.find_root(search_from = __file__, indicator=".project_root")
+pyrootutils.set_root(path = path,
+                     project_root_env_var = True,
+                     dotenv = True,
+                     pythonpath = True)
+
+
 
 torch.backends.cudnn.benchmark = True
-EPISODE_LENGTH = 501
+EPISODE_LENGTH = 500
 
 def make_agent(obs_spec, action_spec, cfg):
     cfg.obs_shape = obs_spec.shape
@@ -316,16 +334,95 @@ class Workspace:
         with snapshot.open('rb') as f:
             payload = torch.load(f)
         for k, v in payload.items():
+            # if k != "replay_buffer":
             self.__dict__[k] = v
+            
+    def merge_dictionary(self, list_of_Dict):
+        merged_data = {}
+
+        for d in list_of_Dict:
+            for k, v in d.items():
+                if k not in merged_data.keys():
+                    merged_data[k] = [v]
+                else:
+                    merged_data[k].append(v)
+
+        for k, v in merged_data.items():
+            merged_data[k] = np.concatenate(merged_data[k])
+
+        return merged_data
+    
+    def get_timestep_from_idx(self, offline_data: dict, idx: int):
+        return dmc.ExtendedTimeStep(
+            step_type=step_type_lookup[offline_data['step_type'][idx]],
+            reward=offline_data['reward'][idx],
+            observation=offline_data['observation'][idx],
+            discount=offline_data['discount'][idx],
+            action=offline_data['action'][idx]
+        )
+    
+    def add_offline_data_to_buffer(self, offline_data, framestack):
+        offline_data_length = offline_data['reward'].shape[0]
+        for v in offline_data.values():
+            assert v.shape[0] == offline_data_length # 데이터 길이 맞는지 검정
+        for idx in range(offline_data_length):
+            time_step = self.get_timestep_from_idx(offline_data, idx) # idx 번의 step_type, reward, observation, discount, actions
+            if not time_step.first(): # 맨 마지막이거나 맨 처음일 때
+                stacked_frames.append(time_step.observation)
+                time_step_stack = time_step._replace(observation=np.concatenate(stacked_frames, axis=0))
+                # print(time_step.observation.shape)
+                # self.replay_buffer.add(time_step_stack)
+                self.add(time_step_stack)
+            else: # 일반 가동중일때
+                stacked_frames = deque(maxlen=framestack)
+                while len(stacked_frames) < framestack:
+                    stacked_frames.append(time_step.observation)
+                time_step_stack = time_step._replace(observation=np.concatenate(stacked_frames, axis=0))
+                # self.replay_buffer.add(time_step_stack)
+                self.add(time_step_stack)
+                
+    def add(self, time_step):
+        if self.replay_buffer.index == -1:
+            self.replay_buffer.index = 0
+            self.replay_buffer.obs_shape = list(time_step.observation.shape)
+            self.replay_buffer.ims_channels = self.replay_buffer.obs_shape[0] // self.replay_buffer.frame_stack
+            self.replay_buffer.act_shape = time_step.action.shape
+
+            if self.replay_buffer.gta:
+                # self.replay_buffer.obs = np.zeros([self.replay_buffer.buffer_size, *self.replay_buffer.obs_shape[1:]], dtype=np.uint8)
+                self.replay_buffer.obs = np.zeros([self.replay_buffer.buffer_size, time_step.observation.shape[0]], dtype=np.float32)
+            else:
+                self.replay_buffer.obs = np.zeros([self.replay_buffer.buffer_size, self.replay_buffer.ims_channels, *self.replay_buffer.obs_shape[1:]], dtype=np.uint8)
+            self.replay_buffer.act = np.zeros([self.replay_buffer.buffer_size, *self.replay_buffer.act_shape], dtype=np.float32)
+            self.replay_buffer.rew = np.zeros([self.replay_buffer.buffer_size], dtype=np.float32)
+            self.replay_buffer.dis = np.zeros([self.replay_buffer.buffer_size], dtype=np.float32)
+            self.replay_buffer.valid = np.zeros([self.replay_buffer.buffer_size], dtype=np.bool_)
+        # self.replay_buffer.add_data_point(time_step)
+        
+        # first = time_step.first()
+        latest_obs = time_step.observation
+        np.copyto(self.replay_buffer.obs[self.replay_buffer.index], latest_obs)  # Check most recent image
+        np.copyto(self.replay_buffer.act[self.replay_buffer.index], time_step.action)
+        self.replay_buffer.rew[self.replay_buffer.index] = time_step.reward
+        self.replay_buffer.dis[self.replay_buffer.index] = time_step.discount
+        self.replay_buffer.valid[(self.replay_buffer.index + self.replay_buffer.frame_stack) % self.replay_buffer.buffer_size] = False
+        if self.replay_buffer.traj_index >= self.replay_buffer.nstep:
+            self.replay_buffer.valid[(self.replay_buffer.index - self.replay_buffer.nstep + 1) % self.replay_buffer.buffer_size] = True
+        self.replay_buffer.index += 1
+        self.replay_buffer.traj_index += 1
+        if self.replay_buffer.index == self.replay_buffer.buffer_size:
+            self.replay_buffer.index = 0
+            self.replay_buffer.full = True
+
 
     def fine_tune_with_GTA(self, offline_dir, gta_dir):
         # Open dataset, load as memory buffer
         self.replay_buffer = EfficientLatentReplayBuffer(
                                                     self.cfg.replay_buffer_size,
                                                     self.cfg.batch_size,
-                                                    self.cfg.nstep,
-                                                    self.cfg.discount,
                                                     1,
+                                                    self.cfg.discount,
+                                                    1, # self.cfg.frame_stack
                                                     self.data_specs)
 
         # load_generated_dataset_into_buffer(Path(offline_dir), self.replay_buffer, 1,
@@ -393,8 +490,8 @@ class Workspace:
                                          self.cfg.replay_buffer_size)
             
         latent_dataset = []
-        for i in tqdm.tqdm(range(self.replay_buffer.index//EPISODE_LENGTH), desc='encoding observations'):
-            batch = self.replay_buffer.gather_nstep_indices(np.arange(EPISODE_LENGTH * i, EPISODE_LENGTH * (i+1))) # 501 for the episode length
+        for i in tqdm.tqdm(range(self.replay_buffer.index//(EPISODE_LENGTH + 1)), desc='encoding observations'):
+            batch = self.replay_buffer.ordered_sampling(np.arange(EPISODE_LENGTH * i, EPISODE_LENGTH * (i+1))) # 501 for the episode length
             obs, action, reward, discount, next_obs = utils.to_torch(
                 batch, self.device)
             # augment
@@ -419,7 +516,7 @@ class Workspace:
             } 
             latent_dataset.append(trajectory)
         timestr = datetime.datetime.now().strftime('%Y%m%d%H%M')
-        np.save(f"/home/taeyoung/v-d4rl/encoded_trajectory/{self.cfg.task_name}_{timestr}.npy", latent_dataset)
+        np.save(f"/home/jaewoo/research/v-d4rl/encoded_trajectory/{self.cfg.task_name}_{timestr}.npy", latent_dataset)
 
     def latent_eval(self):
         step, episode, total_reward = 0, 0, 0

@@ -5,8 +5,8 @@ defaults:
   - override hydra/launcher: submitit_local
 
 # GTA 
-gta: /home/taeyoung/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver1.npy
-snapshot_dir: /home/taeyoung/v-d4rl/trained_policy.pt
+gta: /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver3.npy
+snapshot_dir: /home/jaewoo/research/v-d4rl/trained_policy.pt
 save_latent_trajectory: True
 
 
@@ -38,7 +38,7 @@ batch_size: 256
 
 # misc
 seed: 1
-device: cuda
+device: cuda:0
 save_video: True
 save_train_video: False
 use_tb: True

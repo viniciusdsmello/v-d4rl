@@ -100,7 +100,8 @@ class EfficientReplayBuffer(AbstractReplayBuffer):
         return self.gather_nstep_indices(indices)
     
     def ordered_sampling(self, idx):
-        return self.gather_nstep_indices(idx)
+        indices = self.valid.nonzero()[0][idx]
+        return self.gather_nstep_indices(indices)
 
     def gather_nstep_indices(self, indices):
         n_samples = indices.shape[0]
@@ -120,6 +121,9 @@ class EfficientReplayBuffer(AbstractReplayBuffer):
 
         act = self.act[indices]
         dis = np.expand_dims(self.next_dis * self.dis[nobs_gather_ranges[:, -1]], axis=-1)
+
+        # action 500 -> (497, 498, 499) , nobs -> (498, 499, 500) reward 500
+        # rew mean (501) : 0.87~0.95
 
         if self.sarsa:
             nact = self.act[indices + self.nstep]
@@ -159,8 +163,8 @@ class EfficientLatentReplayBuffer(AbstractReplayBuffer):
         self.data_dict = {}
         self.index = -1
         self.traj_index = 0
-        self.frame_stack = 1
-        self._recorded_frames = 1 + 1
+        self.frame_stack = frame_stack
+        self._recorded_frames = frame_stack + 1
         self.batch_size = batch_size
         self.nstep = nstep
         self.discount = discount
@@ -190,27 +194,8 @@ class EfficientLatentReplayBuffer(AbstractReplayBuffer):
 
     def add_data_point(self, time_step):
         first = time_step.first()
-        latest_obs = time_step.observation[-self.ims_channels:]
-        if first:
-            end_index = self.index + self.frame_stack
-            end_invalid = end_index + self.frame_stack + 1
-            if end_invalid > self.buffer_size:
-                if end_index > self.buffer_size:
-                    end_index = end_index % self.buffer_size
-                    self.obs[self.index:self.buffer_size] = latest_obs
-                    self.obs[0:end_index] = latest_obs
-                    self.full = True
-                else:
-                    self.obs[self.index:end_index] = latest_obs
-                end_invalid = end_invalid % self.buffer_size
-                self.valid[self.index:self.buffer_size] = False
-                self.valid[0:end_invalid] = False
-            else:
-                self.obs[self.index:end_index] = latest_obs
-                self.valid[self.index:end_invalid] = False
-            self.index = end_index
-            self.traj_index = 1
-        else:
+        if time_step.observation.shape[0] == 100:
+            latest_obs = time_step.observation
             np.copyto(self.obs[self.index], latest_obs)  # Check most recent image
             np.copyto(self.act[self.index], time_step.action)
             self.rew[self.index] = time_step.reward
@@ -223,6 +208,40 @@ class EfficientLatentReplayBuffer(AbstractReplayBuffer):
             if self.index == self.buffer_size:
                 self.index = 0
                 self.full = True
+        else:
+            latest_obs = time_step.observation[-self.ims_channels:]
+            if first:
+                end_index = self.index + self.frame_stack
+                end_invalid = end_index + self.frame_stack + 1
+                if end_invalid > self.buffer_size:
+                    if end_index > self.buffer_size:
+                        end_index = end_index % self.buffer_size
+                        self.obs[self.index:self.buffer_size] = latest_obs
+                        self.obs[0:end_index] = latest_obs
+                        self.full = True
+                    else:
+                        self.obs[self.index:end_index] = latest_obs
+                    end_invalid = end_invalid % self.buffer_size
+                    self.valid[self.index:self.buffer_size] = False
+                    self.valid[0:end_invalid] = False
+                else:
+                    self.obs[self.index:end_index] = latest_obs
+                    self.valid[self.index:end_invalid] = False
+                self.index = end_index
+                self.traj_index = 1
+            else:
+                np.copyto(self.obs[self.index], latest_obs)  # Check most recent image
+                np.copyto(self.act[self.index], time_step.action)
+                self.rew[self.index] = time_step.reward
+                self.dis[self.index] = time_step.discount
+                self.valid[(self.index + self.frame_stack) % self.buffer_size] = False
+                if self.traj_index >= self.nstep:
+                    self.valid[(self.index - self.nstep + 1) % self.buffer_size] = True
+                self.index += 1
+                self.traj_index += 1
+                if self.index == self.buffer_size:
+                    self.index = 0
+                    self.full = True
 
     def add(self, time_step):
         if self.index == -1:
@@ -234,15 +253,16 @@ class EfficientLatentReplayBuffer(AbstractReplayBuffer):
         return self.gather_nstep_indices(indices)
     
     def ordered_sampling(self, idx):
-        return self.gather_nstep_indices(idx)
+        indices = self.valid.nonzero()[0][idx]
+        return self.gather_nstep_indices(indices)
 
     def gather_nstep_indices(self, indices):
         n_samples = indices.shape[0]
         all_gather_ranges = np.stack([np.arange(indices[i] - self.frame_stack, indices[i] + self.nstep)
                                       for i in range(n_samples)], axis=0) % self.buffer_size
-        gather_ranges = all_gather_ranges[:, self.frame_stack:]  # bs x nstep
-        obs_gather_ranges = all_gather_ranges[:, :self.frame_stack]
-        nobs_gather_ranges = all_gather_ranges[:, -self.frame_stack:]
+        gather_ranges = all_gather_ranges[:, self.frame_stack:]  # bs x nstep # 0 ~~
+        obs_gather_ranges = all_gather_ranges[:, :self.frame_stack] # 1~3 의 3장
+        nobs_gather_ranges = all_gather_ranges[:, -self.frame_stack:] # 2~4의 3장
 
         all_rewards = self.rew[gather_ranges]
 
@@ -252,11 +272,16 @@ class EfficientLatentReplayBuffer(AbstractReplayBuffer):
         obs = np.reshape(self.obs[obs_gather_ranges], [n_samples, *self.obs_shape])
         nobs = np.reshape(self.obs[nobs_gather_ranges], [n_samples, *self.obs_shape])
 
-        act = self.act[indices]
+        # act = self.act[indices]
+        act = self.act[indices - self.frame_stack]
         dis = np.expand_dims(self.next_dis * self.dis[nobs_gather_ranges[:, -1]], axis=-1)
 
+        # action 500 -> (497, 498, 499) , nobs -> (498, 499, 500) reward 500
+        # rew mean (501) : 0.87~0.95
+
         if self.sarsa:
-            nact = self.act[indices + self.nstep]
+            # nact = self.act[indices + self.nstep]
+            nact = self.act[indices]
             return (obs, act, rew, dis, nobs, nact)
 
         return (obs, act, rew, dis, nobs)

@@ -7,6 +7,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pyrootutils
+
+path = pyrootutils.find_root(search_from = __file__, indicator=".project_root")
+pyrootutils.set_root(path = path,
+                     project_root_env_var = True,
+                     dotenv = True,
+                     pythonpath = True)
 
 import utils
 
@@ -429,7 +436,6 @@ class DrQV2Agent:
         # obs = self.encoder(obs)
         # with torch.no_grad():
         #     next_obs = self.encoder(next_obs)
-
 
         if self.use_tb:
             metrics['batch_reward'] = reward.mean().item()

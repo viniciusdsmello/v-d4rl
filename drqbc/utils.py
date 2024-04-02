@@ -212,7 +212,7 @@ def load_generated_dataset_into_buffer(gta_dir, replay_buffer, frame_stack, repl
     episodes['action'] = episodes['actions']
     episodes['observation'] = episodes['observations']
     episodes['reward'] = episodes['rewards']
-    episodes['discount'] = np.ones_like(episodes['reward']).reshape(-1)
+    episodes['discount'] = np.ones_like(episodes['reward']).reshape(-1) ######## 여기 1로 원본데이터에는 되어 있음. 하드코딩. TODO
 
     replay_buffer.on_gta_flag()
     add_offline_data_to_buffer(episodes, replay_buffer, framestack=frame_stack)
@@ -227,11 +227,13 @@ def add_offline_data_to_buffer(offline_data: dict, replay_buffer: EfficientRepla
     for v in offline_data.values():
         assert v.shape[0] == offline_data_length # 데이터 길이 맞는지 검정
     for idx in range(offline_data_length):
-        time_step = get_timestep_from_idx(offline_data, idx) # idx 번의 step_type, reward, observation, discount, action
+        time_step = get_timestep_from_idx(offline_data, idx) # idx 번의 step_type, reward, observation, discount, actions
         if not time_step.first(): # 맨 마지막이거나 맨 처음일 때
             stacked_frames.append(time_step.observation)
             time_step_stack = time_step._replace(observation=np.concatenate(stacked_frames, axis=0))
+            # print(time_step.observation)
             replay_buffer.add(time_step_stack)
+            # print(kyle)
         else: # 일반 가동중일때
             stacked_frames = deque(maxlen=framestack)
             while len(stacked_frames) < framestack:
