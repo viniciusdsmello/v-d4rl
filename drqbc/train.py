@@ -78,7 +78,7 @@ class Workspace:
             project=f'VD4RL_{self.cfg.task_name}',
             entity='gda-for-orl',
             group=f'{self.cfg.experiment}',
-            name=f'DrQ-v2'
+            name=f'DrQ-v2_{self.cfg.task_name}_{self.cfg.seed}'
         )
 
         wandb.run.save()
@@ -322,7 +322,7 @@ class Workspace:
                 pbar.update(1)
 
     def save_snapshot(self):
-        snapshot = self.work_dir / 'snapshot.pt'
+        snapshot = Path(f'/home/jaewoo/research/v-d4rl/pretrained_policies/{self.cfg.task_name}.pt')
         keys_to_save = ['agent', 'timer', '_global_step', '_global_episode']
         payload = {k: self.__dict__[k] for k in keys_to_save}
         with snapshot.open('wb') as f:
@@ -491,7 +491,7 @@ class Workspace:
             
         latent_dataset = []
         for i in tqdm.tqdm(range(self.replay_buffer.index//(EPISODE_LENGTH + 1)), desc='encoding observations'):
-            batch = self.replay_buffer.ordered_sampling(np.arange(EPISODE_LENGTH * i, EPISODE_LENGTH * (i+1))) # 501 for the episode length
+            batch = self.replay_buffer.ordered_sampling(np.arange((EPISODE_LENGTH-2) * i, (EPISODE_LENGTH-2) * (i+1))) # 501 for the episode length
             obs, action, reward, discount, next_obs = utils.to_torch(
                 batch, self.device)
             # augment
@@ -567,12 +567,12 @@ def main(cfg):
 
     else:
         if load_flag:
-            print(f'resuming training')
             workspace.load_snapshot(cfg.snapshot_dir)
             if cfg.save_latent_trajectory:
                 workspace.save_latent_trajectory(cfg.offline_dir)
 
         if cfg.offline:
+            print(f'resuming training')
             workspace.train_offline(cfg.offline_dir)
             if cfg.save_latent_trajectory:
                 workspace.save_latent_trajectory(cfg.offline_dir)
