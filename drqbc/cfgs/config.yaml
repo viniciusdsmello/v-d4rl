@@ -5,8 +5,8 @@ defaults:
   - override hydra/launcher: submitit_local
 
 # GTA 
-gta: /home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver3.npy
-snapshot_dir: /home/jaewoo/research/v-d4rl/trained_policy.pt
+gta: False #/home/jaewoo/research/v-d4rl/encoded_trajectory/offline_walker_walk_medium_ver3.npy
+snapshot_dir: False #/home/jaewoo/research/v-d4rl/trained_policy.pt
 save_latent_trajectory: True
 
 

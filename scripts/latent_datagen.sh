@@ -8,6 +8,12 @@ offline_dir=/home/jaewoo/research/v-d4rl/vd4rl_data/main/walker_walk/medium ## /
 device=cuda:0
 
 
-offline_dir=/home/jaewoo/research/v-d4rl/vd4rl_data/main/walker_walk/medium
-python drqbc/train.py  offline_dir=$offline_dir device=$device task_name=offline_${ENVNAME}_${TYPE}  nstep=3 seed=0 gta=$gta num_train_frames=$num_train_frames save_latent_trajectory=$save_latent_trajectory &
-
+for env in 'walker_walk' 'cheetah_run'
+do 
+    for type in 'medium_replay' 'medium' 'medium_expert' 'expert'
+    do
+        offline_dir=/home/jaewoo/research/v-d4rl/vd4rl_data/main/${env}/${type}
+        python drqbc/train.py snapshot_dir=False offline_dir=$offline_dir device=$device task_name=offline_${env}_${type}  nstep=3 seed=0 gta=$gta num_train_frames=$num_train_frames save_latent_trajectory=$save_latent_trajectory &
+    done
+    wait
+done 
