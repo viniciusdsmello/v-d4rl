@@ -12,7 +12,7 @@ distracting_mode: null
 # train settings
 num_seed_frames: 4000
 # eval
-eval_every_frames: 10000
+eval_every_frames: 200
 num_eval_episodes: 10
 eval_on_distracting: False
 eval_on_multitask: False
