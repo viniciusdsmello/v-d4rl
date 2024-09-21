@@ -7,6 +7,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pyrootutils
+
+path = pyrootutils.find_root(search_from = __file__, indicator=".project_root")
+pyrootutils.set_root(path = path,
+                     project_root_env_var = True,
+                     dotenv = True,
+                     pythonpath = True)
 
 import utils
 
@@ -100,6 +107,21 @@ class Actor(nn.Module):
         dist = utils.TruncatedNormal(mu, std)
         return dist
 
+    def latent_forward(self, obs, std):
+        mu = self.policy(obs)
+        mu = torch.tanh(mu)
+        std = torch.ones_like(mu) * std
+
+        dist = utils.TruncatedNormal(mu, std)
+        return dist    
+
+    def fine_tune_mode(self):
+        self.trunk.eval()
+        for p in self.trunk.parameters():
+	        p.requires_grad=False
+
+
+
 
 class Critic(nn.Module):
     def __init__(self, repr_dim, action_shape, feature_dim, hidden_dim):
@@ -121,12 +143,25 @@ class Critic(nn.Module):
         self.apply(utils.weight_init)
 
     def forward(self, obs, action):
-        h = self.trunk(obs)
+        h = self.trunk(obs) # 
+        # print(f'DIM H:', h.shape)
         h_action = torch.cat([h, action], dim=-1)
         q1 = self.Q1(h_action)
         q2 = self.Q2(h_action)
 
         return q1, q2
+    
+    def latent_forward(self, obs, action):
+        h_action = torch.cat([obs, action], dim=-1)
+        q1 = self.Q1(h_action)
+        q2 = self.Q2(h_action)
+        return q1, q2
+
+    def fine_tune_mode(self):
+        self.trunk.eval()
+        for p in self.trunk.parameters():
+	        p.requires_grad=False
+
 
 
 class DrQV2Agent:
@@ -145,7 +180,7 @@ class DrQV2Agent:
         self.offline = offline
         self.bc_weight = bc_weight
         self.use_bc = use_bc
-
+        self.feature_dim = feature_dim
         # models
         self.encoder = Encoder(obs_shape).to(device)
         self.actor = Actor(self.encoder.repr_dim, action_shape, feature_dim,
@@ -186,6 +221,20 @@ class DrQV2Agent:
             if step < self.num_expl_steps:
                 action.uniform_(-1.0, 1.0)
         return action.cpu().numpy()[0]
+    
+    def latent_act(self, obs, step, eval_mode):
+        # obs = torch.as_tensor(obs, device=self.device)
+        # obs = self.encoder(obs.unsqueeze(0)) # 
+        stddev = utils.schedule(self.stddev_schedule, step)
+        ## TODO 구현 안되어 있음 ##
+        dist = self.actor.latent_forward(obs, stddev) # obs 들어가는 건 truncated 되어 있는 것이어야 함. 
+        if eval_mode:
+            action = dist.mean
+        else:
+            action = dist.sample(clip=None)
+            if step < self.num_expl_steps:
+                action.uniform_(-1.0, 1.0)
+        return action.cpu().numpy()[0]
 
     def update_critic(self, obs, action, reward, discount, next_obs, step):
         metrics = dict()
@@ -213,6 +262,44 @@ class DrQV2Agent:
         critic_loss.backward()
         self.critic_opt.step()
         self.encoder_opt.step()
+
+        return metrics
+    
+    def latent_update_critic(self, obs, action, reward, discount, next_obs, step):
+        metrics = dict()
+        # print(obs.shape)
+        # print(obs.shape)
+        # print(obs.shape)
+        # print(obs.shape)
+        # print(obs.shape)
+        # print(obs.shape)
+        critic_trunk = obs[:, :obs.shape[-1]//2 ]
+        actor_trunk = obs[:, obs.shape[-1]//2:]
+        
+        next_critic_trunk = next_obs[:, :obs.shape[-1]//2 ]
+        next_actor_trunk = next_obs[:, obs.shape[-1]//2:]
+
+        with torch.no_grad():
+            stddev = utils.schedule(self.stddev_schedule, step)
+            dist = self.actor.latent_forward(next_actor_trunk, stddev) ## TODO 차원나누기
+            next_action = dist.sample(clip=self.stddev_clip)
+            target_Q1, target_Q2 = self.critic_target.latent_forward(next_critic_trunk, next_action)
+            target_V = torch.min(target_Q1, target_Q2)
+            target_Q = reward.float() + (discount * target_V)
+
+        Q1, Q2 = self.critic.latent_forward(critic_trunk, action)
+        critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)
+
+        if self.use_tb:
+            metrics['critic_target_q'] = target_Q.mean().item()
+            metrics['critic_q1'] = Q1.mean().item()
+            metrics['critic_q2'] = Q2.mean().item()
+            metrics['critic_loss'] = critic_loss.item()
+
+        # optimize encoder and critic
+        self.critic_opt.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        self.critic_opt.step()
 
         return metrics
 
@@ -253,6 +340,46 @@ class DrQV2Agent:
                 metrics['actor_bc_loss'] = actor_bc_loss.item()
 
         return metrics
+    
+    def latent_update_actor(self, obs, step, behavioural_action=None):
+        critic_trunk = obs[:, :obs.shape[-1]//2 ]
+        actor_trunk = obs[:, obs.shape[-1]//2:]
+        metrics = dict()
+
+        stddev = utils.schedule(self.stddev_schedule, step)
+        dist = self.actor.latent_forward(actor_trunk, stddev)
+        action = dist.sample(clip=self.stddev_clip)
+        log_prob = dist.log_prob(action).sum(-1, keepdim=True)
+        Q1, Q2 = self.critic.latent_forward(critic_trunk, action)
+        Q = torch.min(Q1, Q2)
+
+        actor_policy_improvement_loss = -Q.mean()
+
+        actor_loss = actor_policy_improvement_loss
+
+        # offline BC Loss
+        if self.offline:
+            actor_bc_loss = F.mse_loss(action, behavioural_action)
+            # Eq. 5 of arXiv:2106.06860
+            lam = self.bc_weight / Q.detach().abs().mean()
+            if self.use_bc:
+                actor_loss = actor_policy_improvement_loss * lam + actor_bc_loss
+            else:
+                actor_loss = actor_policy_improvement_loss * lam
+
+        # optimize actor
+        self.actor_opt.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        self.actor_opt.step()
+
+        if self.use_tb:
+            metrics['actor_loss'] = actor_policy_improvement_loss.item()
+            metrics['actor_logprob'] = log_prob.mean().item()
+            metrics['actor_ent'] = dist.entropy().sum(dim=-1).mean().item()
+            if self.offline:
+                metrics['actor_bc_loss'] = actor_bc_loss.item()
+
+        return metrics
 
     def update(self, replay_buffer, step):
         metrics = dict()
@@ -263,6 +390,7 @@ class DrQV2Agent:
         batch = next(replay_buffer)
         obs, action, reward, discount, next_obs = utils.to_torch(
             batch, self.device)
+        # print("DIM:", obs.shape)
 
         # augment
         obs = self.aug(obs.float())
@@ -290,3 +418,49 @@ class DrQV2Agent:
                                  self.critic_target_tau)
 
         return metrics
+    
+    def tune_update(self, replay_buffer, step):
+        metrics = dict()
+
+        if step % self.update_every_steps != 0:
+            return metrics
+
+        batch = next(replay_buffer)
+        obs, action, reward, discount, next_obs = utils.to_torch(
+            batch, self.device)
+        # print("DIM:", obs.shape)
+
+        # obs = self.aug(obs.float())
+        # next_obs = self.aug(next_obs.float())
+        # # encode
+        # obs = self.encoder(obs)
+        # with torch.no_grad():
+        #     next_obs = self.encoder(next_obs)
+
+        if self.use_tb:
+            metrics['batch_reward'] = reward.mean().item()
+
+        # update critic
+        metrics.update(
+            self.latent_update_critic(obs, action, reward, discount, next_obs, step))
+
+        # update actor
+        if self.offline:
+            metrics.update(self.latent_update_actor(obs.detach(), step, action.detach()))
+        else:
+            metrics.update(self.latent_update_actor(obs.detach(), step))
+
+        # update critic target
+        utils.soft_update_params(self.critic, self.critic_target,
+                                 self.critic_target_tau)
+
+        return metrics
+
+    def fine_tune_mode(self):
+        self.actor.fine_tune_mode()
+        self.critic.fine_tune_mode()
+        # self.critic_target.eval()
+        self.encoder.eval()
+        self.encoder.requires_grad_(False)
+        for p in self.encoder.parameters():
+	        p.requires_grad=False

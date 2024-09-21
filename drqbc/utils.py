@@ -159,8 +159,24 @@ step_type_lookup = {
     2: StepType.LAST
 }
 
+def merge_dictionary(list_of_Dict):
+    merged_data = {}
+
+    for d in list_of_Dict:
+        for k, v in d.items():
+            if k not in merged_data.keys():
+                merged_data[k] = [v]
+            else:
+                merged_data[k].append(v)
+
+    for k, v in merged_data.items():
+        merged_data[k] = np.concatenate(merged_data[k])
+
+    return merged_data
+
 
 def load_offline_dataset_into_buffer(offline_dir, replay_buffer, frame_stack, replay_buffer_size):
+    print("Loading offline dataset from : ", offline_dir)
     filenames = sorted(offline_dir.glob('*.hdf5'))
     num_steps = 0
     for filename in filenames:
@@ -178,18 +194,47 @@ def load_offline_dataset_into_buffer(offline_dir, replay_buffer, frame_stack, re
             break
     print("Finished, loaded {} timesteps.".format(int(num_steps)))
 
+def load_generated_dataset_into_buffer(gta_dir, replay_buffer, frame_stack, replay_buffer_size):
+    print("Loading generated dataset")
+    num_steps = 0
+    if 'npy' in str(gta_dir):
+        episodes = np.load(gta_dir, allow_pickle=True) # list of dictionaries
+    elif 'npz' in str(gta_dir):
+        episodes = np.load(gta_dir, allow_pickle=True)['data'] # list of dictionaries
+    else:
+        raise RuntimeError("Wrong directory for the generated dataset")
+    for episode in episodes:
+        episode['step_type'] = np.ones_like(episode['rewards'], dtype=np.int).reshape(-1)
+        episode['step_type'][0] = 0
+        episode['step_type'][-1] = 2
+    
+    episodes = merge_dictionary(episodes)
+    episodes['action'] = episodes['actions']
+    episodes['observation'] = episodes['observations']
+    episodes['reward'] = episodes['rewards']
+    episodes['discount'] = np.ones_like(episodes['reward']).reshape(-1) ######## 여기 1로 원본데이터에는 되어 있음. 하드코딩. TODO
+
+    replay_buffer.on_gta_flag()
+    add_offline_data_to_buffer(episodes, replay_buffer, framestack=frame_stack)
+    length = episodes['reward'].shape[0]
+    num_steps += length
+    if num_steps >= replay_buffer_size:
+        raise RuntimeError("data is larger than buffer size")
+    print("Finished, loaded {} timesteps.".format(int(num_steps)))
 
 def add_offline_data_to_buffer(offline_data: dict, replay_buffer: EfficientReplayBuffer, framestack: int = 3):
     offline_data_length = offline_data['reward'].shape[0]
     for v in offline_data.values():
-        assert v.shape[0] == offline_data_length
+        assert v.shape[0] == offline_data_length # 데이터 길이 맞는지 검정
     for idx in range(offline_data_length):
-        time_step = get_timestep_from_idx(offline_data, idx)
-        if not time_step.first():
+        time_step = get_timestep_from_idx(offline_data, idx) # idx 번의 step_type, reward, observation, discount, actions
+        if not time_step.first(): # 맨 마지막이거나 맨 처음일 때
             stacked_frames.append(time_step.observation)
             time_step_stack = time_step._replace(observation=np.concatenate(stacked_frames, axis=0))
+            # print(time_step.observation)
             replay_buffer.add(time_step_stack)
-        else:
+            # print(kyle)
+        else: # 일반 가동중일때
             stacked_frames = deque(maxlen=framestack)
             while len(stacked_frames) < framestack:
                 stacked_frames.append(time_step.observation)

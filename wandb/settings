@@ -1,0 +1,5 @@
+[default]
+entity = gda-for-orl
+project = rebuttal
+base_url = https://api.wandb.ai
+
